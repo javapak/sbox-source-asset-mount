@@ -20,15 +20,15 @@
 
   <ItemGroup>
     <Reference Include="Sandbox.Engine">
-      <HintPath>E:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.Engine.dll</HintPath>
+      <HintPath>D:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.Engine.dll</HintPath>
       <Private>false</Private>
     </Reference>
         <Reference Include="Sandbox.Mounting">
-      <HintPath>E:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.Mounting.dll</HintPath>
+      <HintPath>D:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.Mounting.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Sandbox.System">
-      <HintPath>E:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.System.dll</HintPath>
+      <HintPath>D:\SteamLibrary\steamapps\common\sbox\bin\managed\Sandbox.System.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
