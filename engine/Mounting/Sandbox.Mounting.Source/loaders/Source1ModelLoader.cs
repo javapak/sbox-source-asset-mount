@@ -15,10 +15,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
     protected override async Task<object> LoadAsync()
     {
-        byte[] mdlBytes = await ReadBytesAsync();
-
-
-        // Resolve relative path for companion file lookup
+        // Resolve relative path before going off-thread (uses _path and Host.BerimDir only)
         string relPath =
              System.Uri.UnescapeDataString(
                 new System.Uri( System.IO.Path.GetFullPath( Host.BerimDir ).TrimEnd( System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar ) + System.IO.Path.DirectorySeparatorChar )
@@ -26,21 +23,25 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                     .ToString()
               ).Replace( '\\', '/' );
 
-        byte[]? vvdBytes = Host.ReadCompanion( _path!, ".vvd" );
-        byte[]? vtxBytes = Host.ReadCompanion( _path!, ".dx90.vtx" );
+        // All file I/O and parsing is synchronous and CPU-heavy; run on a thread-pool
+        // thread so we never block the main/UI thread (Qt processEvents stall).
+        return await System.Threading.Tasks.Task.Run( () =>
+        {
+            byte[]  mdlBytes = System.IO.File.ReadAllBytes( _path! );
+            byte[]? vvdBytes = Host.ReadCompanion( _path!, ".vvd" );
+            byte[]? vtxBytes = Host.ReadCompanion( _path!, ".dx90.vtx" );
 
-        if ( vvdBytes == null || vtxBytes == null )
-            throw new FileNotFoundException( $"Missing companion files for {relPath}" );
-        Log.Info( $"MDL buffer size: {mdlBytes.Length}" );
+            if ( vvdBytes == null || vtxBytes == null )
+                throw new System.IO.FileNotFoundException( $"Missing companion files for {relPath}" );
 
-        Log.Info( $"Version: {ReadInt( mdlBytes, 4 )}" );
-        Log.Info( $"vvdBytes length: {vvdBytes?.Length ?? -1}" );
-        Log.Info( $"vtxBytes length: {vtxBytes?.Length ?? -1}" );
+            Log.Info( $"MDL buffer size: {mdlBytes.Length}" );
+            Log.Info( $"Version: {ReadInt( mdlBytes, 4 )}" );
+            Log.Info( $"vvdBytes length: {vvdBytes.Length}" );
+            Log.Info( $"vtxBytes length: {vtxBytes.Length}" );
 
-        var mdl = MdlFile.Load( mdlBytes, vvdBytes, vtxBytes );
-
-
-        return BuildModel( mdl, relPath );
+            var mdl = MdlFile.Load( mdlBytes, vvdBytes, vtxBytes );
+            return BuildModel( mdl, relPath );
+        } );
     }
 
     private object BuildModel( MdlFile mdl, string relPath )
@@ -152,12 +153,6 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         => (byte)System.Math.Clamp( (int)(w * 255f + 0.5f), 0, 255 );
 
     private static int ReadInt( byte[] data, int offset ) => System.BitConverter.ToInt32( data, offset );
-
-    private async Task<byte[]> ReadBytesAsync()
-    {
-
-        return await File.ReadAllBytesAsync( _path! );
-    }
 }
 
 [StructLayout( LayoutKind.Sequential )]
