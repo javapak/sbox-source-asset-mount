@@ -53,7 +53,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         {
             foreach ( var bone in mdl.Bones )
             {
-                string? parentName = bone.Parent >= 0 ? mdl.Bones[bone.Parent].Name : null;
+                string? parentName = bone.Parent >= 0 && bone.Parent < mdl.Bones.Length ? mdl.Bones[bone.Parent].Name : null;
                 var pos = new Vector3( bone.Position[0], bone.Position[1], bone.Position[2] );
                 var rot = EulerToRotation( bone.Rotation[0], bone.Rotation[1], bone.Rotation[2] );
                 modelBuilder.AddBone( bone.Name, pos, rot, parentName );
