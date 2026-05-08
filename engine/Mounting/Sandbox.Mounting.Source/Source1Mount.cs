@@ -1,4 +1,5 @@
 using Sandbox.Mounting;
+using System;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -14,10 +15,24 @@ public class Source1Mount : BaseGameMount
     internal string GameDir  { get; private set; }
     internal string BerimDir { get; private set; }
 
+
+
     protected override void Initialize( InitializeContext context )
     {
         if ( !context.IsAppInstalled( AppId ) )
             return;
+
+            AppDomain.CurrentDomain.AssemblyResolve += ( sender, args ) =>
+    {
+        var name = new System.Reflection.AssemblyName( args.Name ).Name;
+        var dir  = System.IO.Path.GetDirectoryName( typeof( Source1Mount ).Assembly.Location )!;
+        var path = System.IO.Path.Combine( dir, name + ".dll" );
+        if ( System.IO.File.Exists( path ) ) {
+            Log.Info( $"Resolving assembly {args.Name} from {path}" );
+            return System.Reflection.Assembly.LoadFile( path );
+        }
+        return null;
+    };
 
         GameDir  = context.GetAppDirectory( AppId );
         BerimDir = System.IO.Path.Combine( GameDir, "berimbau" );
@@ -41,23 +56,17 @@ public class Source1Mount : BaseGameMount
         foreach ( var f in System.IO.Directory.EnumerateFiles( playersDir, "*.mdl", SearchOption.AllDirectories ) )
             context.Add( ResourceType.Model, Rel( f ), new Source1ModelLoader( this, f ) );
 
-        foreach ( var f in System.IO.Directory.EnumerateFiles( playersDir, "*.vtf", SearchOption.AllDirectories ) )
-            context.Add( ResourceType.Texture, System.IO.Path.ChangeExtension( Rel( f ), ".vtex" ), new Source1TextureLoader( this, f ) );
-
-        foreach ( var f in System.IO.Directory.EnumerateFiles( playersDir, "*.vmt", SearchOption.AllDirectories ) )
-            context.Add( ResourceType.Material, System.IO.Path.ChangeExtension( Rel( f ), ".vmat" ), new Source1MaterialLoader( this, f ) );
-
         IsMounted = true;
         return Task.CompletedTask;
     }
 
-    #nullable enable
-    internal byte[]? ReadCompanion( string mdlFullPath, string newExt )
-    {
-        var path = System.IO.Path.ChangeExtension( mdlFullPath, newExt );
-        return System.IO.File.Exists( path ) ? System.IO.File.ReadAllBytes( path ) : null;
-    }
+        #nullable enable
+        internal byte[]? ReadCompanion( string mdlFullPath, string newExt )
+        {
+            var path = System.IO.Path.ChangeExtension( mdlFullPath, newExt );
+            return System.IO.File.Exists( path ) ? System.IO.File.ReadAllBytes( path ) : null;
+        }
 
-    private string Rel( string full )
-        => System.IO.Path.GetRelativePath( BerimDir, full ).Replace( '\\', '/' );
-}
+        private string Rel( string full )
+            => System.IO.Path.GetRelativePath( BerimDir, full ).Replace( '\\', '/' );
+    }

@@ -33,18 +33,21 @@
     </Reference>
   </ItemGroup>
 
-	<Target Name="CopyOutputDll" AfterTargets="Build">
-		<Copy SourceFiles="$(OutputPath)\$(AssemblyName).dll" DestinationFiles="..\..\..\game\mount\source\source.dll" />
-	</Target>
+<ItemGroup>
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.34.0" />
+</ItemGroup>
 
+<Target Name="ILRepack" AfterTargets="Build">
+<ILRepack 
+        OutputFile="..\..\..\game\mount\source\source.dll"
+        InputAssemblies="$(OutputPath)\$(AssemblyName).dll;$(OutputPath)\MdlCrowbar.dll"
+        Internalize="true" />
+</Target>
 
 
   
   <ItemGroup>
-    <PackageReference Include="Sledge.Formats.Texture" Version="1.1.0" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="ValveKeyValue" Version="0.70.0.499" />
+    <PackageReference Include="MdlCrowbar" Version="0.74.1" />
   </ItemGroup>
 
 
