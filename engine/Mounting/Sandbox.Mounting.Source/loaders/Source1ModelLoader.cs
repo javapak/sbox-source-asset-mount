@@ -311,7 +311,9 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             var name       = string.IsNullOrWhiteSpace( bone.theName ) ? $"bone_{i}" : bone.theName;
             var parentName = bone.parentBoneIndex >= 0 ? mdlData.theBones[bone.parentBoneIndex].theName : null;
 
-            modelBuilder.AddBone( name, boneTransforms[i].Position, boneTransforms[i].Rotation, parentName );
+            var localPos = new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z );
+            var localRot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
+            modelBuilder.AddBone( name, localPos, localRot, parentName );
         }
 
     }
@@ -528,16 +530,6 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             }
         }
 
-        // Accumulate to world space
-        var worldTransforms = new Transform[boneCount];
-        for ( int i = 0; i < boneCount; i++ )
-        {
-            var bone = mdlData.theBones[i];
-            worldTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
-                ? worldTransforms[bone.parentBoneIndex].ToWorld( localTransforms[i] )
-                : localTransforms[i];
-        }
-
         return localTransforms;
     }
 
@@ -644,7 +636,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             Normal       = normal,
             TexCoord     = new Vector2( (float)v.texCoordX, (float)v.texCoordY ),
             BlendIndices = new Color32( b0, b1, b2, 0 ),
-            BlendWeights = new Color32( (byte)w0, (byte)w1, (byte)w2, (byte)0f ),
+            BlendWeights = new Color32( (byte)(w0 * 255f), (byte)(w1 * 255f), (byte)(w2 * 255f), 0 ),
         } );
 
         remapTable[origVertId] = newIdx;
