@@ -45,19 +45,38 @@ public class Source1Mount : BaseGameMount
 
     protected override Task Mount( MountContext context )
     {
-        var playersDir = System.IO.Path.Combine( BerimDir, "models", "player" );
-
-        if ( !System.IO.Directory.Exists( playersDir ) )
-        {
-            IsMounted = true;
-            return Task.CompletedTask;
-        }
-
-        foreach ( var f in System.IO.Directory.EnumerateFiles( playersDir, "*.mdl", SearchOption.AllDirectories ) )
-            context.Add( ResourceType.Model, Rel( f ), new Source1ModelLoader( this, f ) );
+        MountMaterials( context );
+        MountModels( context );
 
         IsMounted = true;
         return Task.CompletedTask;
+    }
+
+    private void MountMaterials( MountContext context )
+    {
+        var materialsDir = System.IO.Path.Combine( BerimDir, "materials" );
+        if ( !System.IO.Directory.Exists( materialsDir ) ) return;
+
+        foreach ( var f in System.IO.Directory.EnumerateFiles( materialsDir, "*.vtf", SearchOption.AllDirectories ) )
+        {
+            var rel = System.IO.Path.ChangeExtension( Rel( f ), null );
+            context.Add( ResourceType.Texture, rel, new VtfTextureLoader( f ) );
+        }
+
+        foreach ( var f in System.IO.Directory.EnumerateFiles( materialsDir, "*.vmt", SearchOption.AllDirectories ) )
+        {
+            var rel = System.IO.Path.ChangeExtension( Rel( f ), null );
+            context.Add( ResourceType.Material, rel, new VmtMaterialLoader( f ) );
+        }
+    }
+
+    private void MountModels( MountContext context )
+    {
+        var playersDir = System.IO.Path.Combine( BerimDir, "models", "player" );
+        if ( !System.IO.Directory.Exists( playersDir ) ) return;
+
+        foreach ( var f in System.IO.Directory.EnumerateFiles( playersDir, "*.mdl", SearchOption.AllDirectories ) )
+            context.Add( ResourceType.Model, Rel( f ), new Source1ModelLoader( this, f ) );
     }
 
         #nullable enable
