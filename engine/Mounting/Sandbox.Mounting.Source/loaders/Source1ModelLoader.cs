@@ -449,7 +449,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             // Raw constant 48-bit position
             pos = DecodePos48( anim.thePos, charBone );
         }
-        else if ( ( anim.flags & 0x04 ) != 0 && anim.thePosV != null )
+        else if ( ( anim.flags & 0x08 ) != 0 && anim.thePosV != null )
         {
             // RLE animated position
             float px = anim.thePosV.animXValueOffset > 0
@@ -506,7 +506,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                         w = (float)anim.theRot64bits.w
                     };
                 }
-                else if ( ( anim.flags & 0x08 ) != 0 && anim.theRotV != null )
+                else if ( ( anim.flags & 0x04 ) != 0 && anim.theRotV != null )
                 {
                     // RLE animated rotation
                     float rx = anim.theRotV.animXValueOffset > 0
@@ -536,11 +536,26 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                 }
                 else
                 {
-                    // No animation data — use bone rest rotation
-                    rot = EulerToRotation( (float)charBone.rotation.x, (float)charBone.rotation.y, (float)charBone.rotation.z );
+                    // No animation data — use bind pose quat (matches BuildBoneTransforms)
+                    rot = new Rotation
+                    {
+                        x = (float)charBone.quat.x,
+                        y = (float)charBone.quat.y,
+                        z = (float)charBone.quat.z,
+                        w = (float)charBone.quat.w
+                    };
                 }
 
-                localTransforms[charBoneIdx] = new Transform( pos, rot );
+            Vector3 sboxPos = new Vector3( pos.x, pos.z, pos.y );            
+            Rotation sboxRot = rot; 
+            if ( charBoneIdx == 0 )
+            {
+                // Corrects the 180-degree turn
+                sboxRot = rot * Rotation.FromYaw( 180 );
+            }
+              localTransforms[charBoneIdx] = new Transform( sboxPos, sboxRot );
+
+
             }
         }
 
