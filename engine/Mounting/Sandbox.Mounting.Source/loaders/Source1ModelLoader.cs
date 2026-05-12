@@ -250,10 +250,10 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                         for ( int i = 0; i < strip.indexCount - 2; i++ )
                         {
                             int base_ = strip.indexMeshIndex;
-                            // Alternate winding for odd triangles, then flip for sbox convention
                             int id0 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i    ]].originalMeshVertexIndex + vertexOffset;
                             int id1 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i + 1]].originalMeshVertexIndex + vertexOffset;
                             int id2 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i + 2]].originalMeshVertexIndex + vertexOffset;
+                            if ( id0 == id1 || id1 == id2 || id0 == id2 ) continue;
                             if ( ( i & 1 ) == 0 )
                             {
                                 AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
