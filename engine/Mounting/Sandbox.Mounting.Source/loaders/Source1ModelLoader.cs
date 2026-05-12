@@ -240,9 +240,9 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                             int id1 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + 1]].originalMeshVertexIndex + vertexOffset;
                             int id2 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + 2]].originalMeshVertexIndex + vertexOffset;
                             // Swap 1 and 2 to flip winding from Source to sbox convention
-                            AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                            AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                            AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            AddVertex( id0, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            AddVertex( id2, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            AddVertex( id1, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
                         }
                     }
                     else if ( (strip.flags & STRIP_IS_TRISTRIP) != 0 )
@@ -256,15 +256,15 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                             if ( id0 == id1 || id1 == id2 || id0 == id2 ) continue;
                             if ( ( i & 1 ) == 0 )
                             {
-                                AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                                AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                                AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id0, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id2, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id1, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
                             }
                             else
                             {
-                                AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                                AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                                AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id1, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id2, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id0, strip, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
                             }
                         }
                     }
@@ -603,6 +603,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
     private static void AddVertex(
     int origVertId,
+    SourceVtxStrip07 strip,
     List<SourceVertex> vertices,
     Transform[] boneTransforms,
     List<SkinnedVertex> vertexList,
@@ -628,9 +629,9 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             pos = Vector3.Zero;
 
         int boneCount = bw.boneCount;
-        byte b0 = boneCount > 0 ? (byte)Math.Clamp( bw.bone[0], 0, boneTransforms.Length - 1 ) : (byte)0;
-        byte b1 = boneCount > 1 ? (byte)Math.Clamp( bw.bone[1], 0, boneTransforms.Length - 1 ) : (byte)0;
-        byte b2 = boneCount > 2 ? (byte)Math.Clamp( bw.bone[2], 0, boneTransforms.Length - 1 ) : (byte)0;
+        byte b0 = boneCount > 0 ? ResolveBoneId( strip, bw.bone[0], boneTransforms.Length ) : (byte)0;
+        byte b1 = boneCount > 1 ? ResolveBoneId( strip, bw.bone[1], boneTransforms.Length ) : (byte)0;
+        byte b2 = boneCount > 2 ? ResolveBoneId( strip, bw.bone[2], boneTransforms.Length ) : (byte)0;
 
         float w0 = boneCount > 0 ? (float)bw.weight[0] : 1f;
         float w1 = boneCount > 1 ? (float)bw.weight[1] : 0f;
@@ -662,6 +663,15 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         remapTable[origVertId] = newIdx;
         indexList.Add( newIdx );
         newIdx++;
+    }
+
+    private static byte ResolveBoneId( SourceVtxStrip07 strip, int hwBoneId, int maxBoneCount )
+    {
+        if ( strip.theVtxBoneStateChanges != null )
+            foreach ( var bsc in strip.theVtxBoneStateChanges )
+                if ( bsc.hardwareId == hwBoneId )
+                    return (byte)Math.Clamp( bsc.newBoneId, 0, maxBoneCount - 1 );
+        return (byte)Math.Clamp( hwBoneId, 0, maxBoneCount - 1 );
     }
 
     // ── Material resolution ───────────────────────────────────────────────
