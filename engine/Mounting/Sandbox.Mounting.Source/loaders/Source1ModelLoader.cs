@@ -528,17 +528,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             }
         }
 
-        // Accumulate local transforms to world space (AddFrame expects world-space, matching AddBone)
-        var worldTransforms = new Transform[boneCount];
-        for ( int i = 0; i < boneCount; i++ )
-        {
-            var bone = mdlData.theBones[i];
-            worldTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
-                ? worldTransforms[bone.parentBoneIndex].ToWorld( localTransforms[i] )
-                : localTransforms[i];
-        }
-
-        return worldTransforms;
+        return localTransforms;
     }
 
     private static float GetAnimValue( List<SourceMdlAnimationValue>? values, int frame )
