@@ -64,6 +64,7 @@ class VmtMaterialLoader( string fullPath ) : ResourceLoader<Source1Mount>
     }
 
     // Build a mount:// path for a VTF reference (relative to materials/).
+    #nullable enable
     private static Texture? LoadVtex( string ident, string vtfRelPath )
     {
         var norm = vtfRelPath.Replace( '\\', '/' ).ToLowerInvariant().Trim( '/' );

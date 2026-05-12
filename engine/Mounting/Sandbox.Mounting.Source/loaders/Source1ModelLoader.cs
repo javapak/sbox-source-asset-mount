@@ -311,9 +311,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             var name       = string.IsNullOrWhiteSpace( bone.theName ) ? $"bone_{i}" : bone.theName;
             var parentName = bone.parentBoneIndex >= 0 ? mdlData.theBones[bone.parentBoneIndex].theName : null;
 
-            var localPos = new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z );
-            var localRot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
-            modelBuilder.AddBone( name, localPos, localRot, parentName );
+            modelBuilder.AddBone( name, boneTransforms[i].Position, boneTransforms[i].Rotation, parentName );
         }
 
     }
@@ -530,7 +528,17 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             }
         }
 
-        return localTransforms;
+        // Accumulate local transforms to world space (AddFrame expects world-space, matching AddBone)
+        var worldTransforms = new Transform[boneCount];
+        for ( int i = 0; i < boneCount; i++ )
+        {
+            var bone = mdlData.theBones[i];
+            worldTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
+                ? worldTransforms[bone.parentBoneIndex].ToWorld( localTransforms[i] )
+                : localTransforms[i];
+        }
+
+        return worldTransforms;
     }
 
     private static float GetAnimValue( List<SourceMdlAnimationValue>? values, int frame )

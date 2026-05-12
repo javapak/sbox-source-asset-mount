@@ -243,7 +243,8 @@ class VtfTextureLoader( string fullPath ) : ResourceLoader<Source1Mount>
         VtfFormat.RGBA16161616 or VtfFormat.RGBA16161616F => w * h * 8,
         _ => 0,
     };
-
+    
+    #nullable enable
     private static byte[]? ConvertToRgba8888( VtfFormat fmt, ReadOnlySpan<byte> src, int w, int h )
     {
         int count = w * h;
