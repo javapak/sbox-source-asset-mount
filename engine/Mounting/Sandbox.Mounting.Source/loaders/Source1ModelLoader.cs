@@ -638,13 +638,25 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         float sum = w0 + w1 + w2;
         if ( sum > 0.0001f ) { w0 /= sum; w1 /= sum; w2 /= sum; } else { w0 = 1f; }
 
+        int iw0 = (int)(w0 * 255f + 0.5f);
+        int iw1 = (int)(w1 * 255f + 0.5f);
+        int iw2 = (int)(w2 * 255f + 0.5f);
+        int weightSum = iw0 + iw1 + iw2;
+        if ( weightSum != 255 )
+        {
+            int diff = 255 - weightSum;
+            if ( iw0 >= iw1 && iw0 >= iw2 ) iw0 += diff;
+            else if ( iw1 >= iw2 )           iw1 += diff;
+            else                             iw2 += diff;
+        }
+
         vertexList.Add( new SkinnedVertex
         {
             Position     = pos,
             Normal       = normal,
             TexCoord     = new Vector2( (float)v.texCoordX, (float)v.texCoordY ),
             BlendIndices = new Color32( b0, b1, b2, 0 ),
-            BlendWeights = new Color32( (byte)(w0 * 255f), (byte)(w1 * 255f), (byte)(w2 * 255f), 0 ),
+            BlendWeights = new Color32( (byte)iw0, (byte)iw1, (byte)iw2, 0 ),
         } );
 
         remapTable[origVertId] = newIdx;
