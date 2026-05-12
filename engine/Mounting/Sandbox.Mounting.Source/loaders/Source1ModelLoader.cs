@@ -300,7 +300,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             var bone = mdlData.theBones[i];
             var localTx = new Transform(
                 new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z ),
-                EulerToRotation( (float)bone.rotation.x, (float)bone.rotation.y, (float)bone.rotation.z )
+                new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w }
             );
             boneTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
                 ? boneTransforms[bone.parentBoneIndex].ToWorld( localTx )
