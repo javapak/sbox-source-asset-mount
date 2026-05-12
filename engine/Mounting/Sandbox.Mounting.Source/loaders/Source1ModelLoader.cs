@@ -233,27 +233,39 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
                     if ( (strip.flags & STRIP_IS_TRILIST) != 0 )
                     {
-                        for ( int i = 0; i < strip.indexCount; i++ )
+                        for ( int i = 0; i < strip.indexCount; i += 3 )
                         {
-                            int sgVertIdx  = sg.theVtxIndexes[strip.indexMeshIndex + i];
-                            var vtxVertex  = sg.theVtxVertexes[sgVertIdx];
-                            int origVertId = vtxVertex.originalMeshVertexIndex + vertexOffset;
-                            AddVertex( origVertId, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            int base_ = strip.indexMeshIndex + i;
+                            int id0 = sg.theVtxVertexes[sg.theVtxIndexes[base_    ]].originalMeshVertexIndex + vertexOffset;
+                            int id1 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + 1]].originalMeshVertexIndex + vertexOffset;
+                            int id2 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + 2]].originalMeshVertexIndex + vertexOffset;
+                            // Swap 1 and 2 to flip winding from Source to sbox convention
+                            AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
                         }
                     }
                     else if ( (strip.flags & STRIP_IS_TRISTRIP) != 0 )
                     {
-                        for ( int i = strip.indexMeshIndex + strip.indexCount - 1; i >= strip.indexMeshIndex + 2; i-- )
+                        for ( int i = 0; i < strip.indexCount - 2; i++ )
                         {
-                            var vtxVert0 = sg.theVtxVertexes[sg.theVtxIndexes[i    ]];
-                            var vtxVert1 = sg.theVtxVertexes[sg.theVtxIndexes[i - 2]];
-                            var vtxVert2 = sg.theVtxVertexes[sg.theVtxIndexes[i - 1]];
-                            int id0 = vtxVert0.originalMeshVertexIndex + vertexOffset;
-                            int id1 = vtxVert1.originalMeshVertexIndex + vertexOffset;
-                            int id2 = vtxVert2.originalMeshVertexIndex + vertexOffset;
-                            AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                            AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
-                            AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            int base_ = strip.indexMeshIndex;
+                            // Alternate winding for odd triangles, then flip for sbox convention
+                            int id0 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i    ]].originalMeshVertexIndex + vertexOffset;
+                            int id1 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i + 1]].originalMeshVertexIndex + vertexOffset;
+                            int id2 = sg.theVtxVertexes[sg.theVtxIndexes[base_ + i + 2]].originalMeshVertexIndex + vertexOffset;
+                            if ( ( i & 1 ) == 0 )
+                            {
+                                AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            }
+                            else
+                            {
+                                AddVertex( id1, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id2, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                                AddVertex( id0, vertices, boneTransforms, vertexList, indexList, remapTable, ref newIdx );
+                            }
                         }
                     }
                 }
