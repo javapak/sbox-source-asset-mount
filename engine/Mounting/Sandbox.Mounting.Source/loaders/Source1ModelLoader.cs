@@ -300,12 +300,17 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
         for ( int i = 0; i < mdlData.theBones.Count; i++ )
         {
-
             var bone = mdlData.theBones[i];
-            var localTx = new Transform(
-                new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z ),
-                new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w }
-            );
+
+            // Y/Z swap: Source is Z-up, sbox is Y-up
+            var pos = new Vector3( (float)bone.position.x, (float)bone.position.z, (float)bone.position.y );
+            var rot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
+
+            // Root bone needs 180° yaw to match sbox facing convention
+            if ( bone.parentBoneIndex < 0 )
+                rot = rot * Rotation.FromYaw( 180 );
+
+            var localTx = new Transform( pos, rot );
             boneTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
                 ? boneTransforms[bone.parentBoneIndex].ToWorld( localTx )
                 : localTx;
@@ -384,6 +389,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         List<SourceMdlBone>? animBones = null )
     {
         int boneCount = mdlData.theBones!.Count;
+        bool isDeltaAnim = ( animDesc.flags & 0x00000004 ) != 0;
 
         // Build name→index map from character MDL bones
         var boneNameToIndex = new Dictionary<string, int>();
@@ -393,22 +399,24 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         // Use anim MDL bones if provided, otherwise use character MDL bones
         var sourceBones = animBones ?? mdlData.theBones;
 
-        // Start with bind pose local transforms from character MDL
+        // Initialise local transforms to match BuildBoneTransforms convention (Y/Z swap, 180° yaw on root).
+        // Delta animations default to identity since frames represent offsets, not absolute poses.
         var localTransforms = new Transform[boneCount];
-// Start with bind pose local transforms using quat directly
         for ( int i = 0; i < boneCount; i++ )
         {
-            var bone = mdlData.theBones[i];
-            localTransforms[i] = new Transform(
-                new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z ),
-                new Rotation
-                {
-                    x = (float)bone.quat.x,
-                    y = (float)bone.quat.y,
-                    z = (float)bone.quat.z,
-                    w = (float)bone.quat.w
-                }
-            );
+            if ( isDeltaAnim )
+            {
+                localTransforms[i] = new Transform( Vector3.Zero, Rotation.Identity );
+            }
+            else
+            {
+                var bone = mdlData.theBones[i];
+                var pos = new Vector3( (float)bone.position.x, (float)bone.position.z, (float)bone.position.y );
+                var rot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
+                if ( bone.parentBoneIndex < 0 )
+                    rot = rot * Rotation.FromYaw( 180 );
+                localTransforms[i] = new Transform( pos, rot );
+            }
         }
         // Determine which section contains this frame
         int sectionIdx    = 0;
@@ -546,14 +554,13 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                     };
                 }
 
-            Vector3 sboxPos = new Vector3( pos.x, pos.z, pos.y );            
-            Rotation sboxRot = rot; 
-            if ( charBoneIdx == 0 )
-            {
-                // Corrects the 180-degree turn
+            Vector3 sboxPos = new Vector3( pos.x, pos.z, pos.y );
+            Rotation sboxRot = rot;
+            // 180° yaw correction is an absolute-pose convention fix; delta frames must not include it
+            if ( charBoneIdx == 0 && !isDeltaAnim )
                 sboxRot = rot * Rotation.FromYaw( 180 );
-            }
-              localTransforms[charBoneIdx] = new Transform( sboxPos, sboxRot );
+
+            localTransforms[charBoneIdx] = new Transform( sboxPos, sboxRot );
 
 
             }
