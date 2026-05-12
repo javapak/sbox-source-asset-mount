@@ -16,9 +16,10 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
     public Source1ModelLoader( Source1Mount host, string path ) { _path = path; }
 
-    protected override async Task<object> LoadAsync()
+   protected override async Task<object> LoadAsync()
+{
+    try
     {
-        try {
         var mdlBytes = await File.ReadAllBytesAsync( _path! );
 
         // Parse MDL first to determine if it's anim-only
@@ -36,48 +37,61 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         mdlFile.ReadAnimationMdlBlocks();
         mdlFile.ReadSequenceDescs();
 
-
-
         var allAnimDescs = new List<SourceMdlAnimationDesc49>( mdlData.theAnimationDescs ?? new() );
-        var allSeqDescs  = new List<SourceMdlSequenceDesc>( mdlData.theSequenceDescs ?? new() );
+        var allSeqDescs = new List<SourceMdlSequenceDesc>( mdlData.theSequenceDescs ?? new() );
         var animDescBones = new Dictionary<SourceMdlAnimationDesc49, List<SourceMdlBone>>();
 
-
-        if ( !mdlData.theMdlFileOnlyHasAnimations ) {
-
-        var playerDir = System.IO.Path.Combine( Host.BerimDir, "models", "player" );
-
-        // Shared anim MDLs loaded for every character
-        var sharedAnimFiles = new[]
+        if ( !mdlData.theMdlFileOnlyHasAnimations )
         {
-            "anim_shared.mdl",
-            "male_anims.mdl",
-            "female_anim_shared.mdl",
-            "player_anim_shared.mdl",
-        };
+            var playerDir = System.IO.Path.Combine( Host.BerimDir, "models", "player" );
+            var modelName = mdlData.theModelName.ToLowerInvariant();
 
+            // 1. Universal Shared Animations
+            var sharedAnimFiles = new List<string>
+            {
+                "anim_shared.mdl",
+                "player_anim_shared.mdl",
+            };
 
-// Character MDL anim descs use character bones
-        if ( mdlData.theAnimationDescs != null )
-            foreach ( var ad in mdlData.theAnimationDescs )
-                animDescBones[ad] = mdlData.theBones;
+            // 2. Gender-Specific Shared Animations
+            var maleModels = new[] { "knight", "ryoku", "phalanx" };
+            var femaleModels = new[] { "pure", "vanguard" };
 
-        foreach ( var fileName in sharedAnimFiles )
-        {
-            var animPath = System.IO.Path.Combine( playerDir, fileName );
-            TryLoadAnimMdl( animPath, allAnimDescs, allSeqDescs, animDescBones );
+            if ( maleModels.Contains( modelName ) )
+            {
+                sharedAnimFiles.Add( "male_anims.mdl" );
+            }
+            else if ( femaleModels.Contains( modelName ) )
+            {
+                sharedAnimFiles.Add( "female_anim_shared.mdl" );
+            }
+
+            // Map current character bones to its own animation descs
+            if ( mdlData.theAnimationDescs != null )
+            {
+                foreach ( var ad in mdlData.theAnimationDescs )
+                    animDescBones[ad] = mdlData.theBones;
+            }
+
+            // Load determined shared files
+            foreach ( var fileName in sharedAnimFiles )
+            {
+                var animPath = System.IO.Path.Combine( playerDir, fileName );
+                TryLoadAnimMdl( animPath, allAnimDescs, allSeqDescs, animDescBones );
+            }
+
+            // 3. Character-Specific Animations (The "Knight" Exception)
+            string specificAnimFile = ( modelName == "knight" ) 
+                ? "anim_judgement.mdl" 
+                : $"anim_{modelName}.mdl";
+
+            var charAnimPath = System.IO.Path.Combine( playerDir, specificAnimFile );
+            TryLoadAnimMdl( charAnimPath, allAnimDescs, allSeqDescs, animDescBones );
         }
-
-        // Character-specific anim MDL by internal model name
-        var charAnimPath = System.IO.Path.Combine( playerDir, $"anim_{mdlData.theModelName}.mdl" );
-        TryLoadAnimMdl( charAnimPath, allAnimDescs, allSeqDescs, animDescBones );
-        }
-
 
         var vvdBytes = Host.ReadCompanion( _path!, ".vvd" );
         var vtxBytes = Host.ReadCompanion( _path!, ".dx90.vtx" );
 
-        // Anim-only MDL has no geometry companion files
         if ( vvdBytes == null || vtxBytes == null )
         {
             if ( mdlData.theMdlFileOnlyHasAnimations )
@@ -86,7 +100,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             throw new FileNotFoundException( $"Missing companion files for {_path}" );
         }
 
-        // Parse VVD
+        // VVD Parsing
         var vvdData = new SourceVvdFileData04();
         using var vvdReader = new BinaryReader( new MemoryStream( vvdBytes ) );
         var vvdFile = new SourceVvdFile04( vvdReader, vvdData );
@@ -99,30 +113,20 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             ? vvdData.theFixedVertexesByLod[0]
             : vvdData.theVertexes;
 
-        // Parse VTX
+        // VTX Parsing
         var vtxData = new SourceVtxFileData07();
         using var vtxReader = new BinaryReader( new MemoryStream( vtxBytes ) );
         var vtxFile = new SourceVtxFile07( vtxReader, vtxData );
         vtxFile.ReadSourceVtxHeader();
         vtxFile.ReadSourceVtxBodyParts();
 
-        Log.Info( $"Total sequences: {allSeqDescs.Count}" );
-        Log.Info( $"Total anim descs: {allAnimDescs.Count}" );
-        foreach ( var seq in allSeqDescs.Take( 50 ) )
-        {
-            if ( seq.theAnimDescIndexes != null && seq.theAnimDescIndexes.Count > 0 )
-            {
-                var animDesc = allAnimDescs[seq.theAnimDescIndexes[0]];
-                Log.Info( $"seq='{seq.theName}' seqflags=0x{seq.flags:X8} animflags=0x{animDesc.flags:X8} frameCount={animDesc.frameCount} isLinked={animDesc.theAnimIsLinkedToSequence}" );
-            }
-        }
-
-        return BuildModel( mdlData, vvdData, vtxData, vertices, allAnimDescs, allSeqDescs, animDescBones );        }
-        catch ( Exception ex )
-        {
-            throw new Exception( $"Failed loading {_path}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}", ex );        
-        }
+        return BuildModel( mdlData, vvdData, vtxData, vertices, allAnimDescs, allSeqDescs, animDescBones );
     }
+    catch ( Exception ex )
+    {
+        throw new Exception( $"Failed loading {_path}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}", ex );
+    }
+}
 
     private void TryLoadAnimMdl(
         string path,
