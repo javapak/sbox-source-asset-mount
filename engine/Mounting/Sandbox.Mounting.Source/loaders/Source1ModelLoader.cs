@@ -46,25 +46,13 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             var playerDir = System.IO.Path.Combine( Host.BerimDir, "models", "player" );
             var modelName = mdlData.theModelName.ToLowerInvariant();
 
-            // 1. Universal Shared Animations
-            var sharedAnimFiles = new List<string>
-            {
-                "anim_shared.mdl",
-                "player_anim_shared.mdl",
-            };
-
-            // 2. Gender-Specific Shared Animations
-            var maleModels = new[] { "knight", "ryoku", "phalanx" };
-            var femaleModels = new[] { "pure", "vanguard" };
-
-            if ( maleModels.Contains( modelName ) )
-            {
-                sharedAnimFiles.Add( "male_anims.mdl" );
-            }
-            else if ( femaleModels.Contains( modelName ) )
-            {
-                sharedAnimFiles.Add( "female_anim_shared.mdl" );
-            }
+            // Use the QC include list for Blade Symphony character MDLs instead of
+            // broad heuristics. For knight.qc the only included animation MDLs are:
+            //   $includemodel "player/anim_shared.mdl"
+            //   $includemodel "player/anim_judgement.mdl"
+            // Loading extra shared files here can add unrelated sequences with the same
+            // names or incompatible assumptions, making animation diagnosis misleading.
+            var sharedAnimFiles = GetIncludedAnimMdlsForModel( modelName );
 
             // Map current character bones to its own animation descs
             if ( mdlData.theAnimationDescs != null )
@@ -80,13 +68,9 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                 TryLoadAnimMdl( animPath, allAnimDescs, allSeqDescs, animDescBones );
             }
 
-            // 3. Character-Specific Animations (The "Knight" Exception)
-            string specificAnimFile = ( modelName == "knight" ) 
-                ? "anim_judgement.mdl" 
-                : $"anim_{modelName}.mdl";
-
-            var charAnimPath = System.IO.Path.Combine( playerDir, specificAnimFile );
-            TryLoadAnimMdl( charAnimPath, allAnimDescs, allSeqDescs, animDescBones );
+            // Character-specific animation MDLs are now included through
+            // GetIncludedAnimMdlsForModel(), preserving QC include order and avoiding
+            // duplicate loads.
         }
 
         var vvdBytes = Host.ReadCompanion( _path!, ".vvd" );
@@ -127,6 +111,41 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         throw new Exception( $"Failed loading {_path}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}", ex );
     }
 }
+
+    private static List<string> GetIncludedAnimMdlsForModel( string modelName )
+    {
+        // This is intentionally conservative. The decompiled knight.qc includes only
+        // player/anim_shared.mdl and player/anim_judgement.mdl. Keep this exact for
+        // knight so unrelated animation MDLs do not pollute the exported sequence set.
+        if ( modelName == "knight" )
+        {
+            return new List<string>
+            {
+                "anim_shared.mdl",
+                "anim_judgement.mdl",
+            };
+        }
+
+        // Fallback for characters whose QC has not been provided yet. This preserves
+        // the old broad behavior for non-knight models, but these should ideally be
+        // replaced with exact QC/MDL includemodel data per character.
+        var files = new List<string>
+        {
+            "anim_shared.mdl",
+            "player_anim_shared.mdl",
+        };
+
+        var maleModels = new[] { "ryoku", "phalanx" };
+        var femaleModels = new[] { "pure", "vanguard" };
+
+        if ( maleModels.Contains( modelName ) )
+            files.Add( "male_anims.mdl" );
+        else if ( femaleModels.Contains( modelName ) )
+            files.Add( "female_anim_shared.mdl" );
+
+        files.Add( $"anim_{modelName}.mdl" );
+        return files;
+    }
 
     private void TryLoadAnimMdl(
         string path,
@@ -302,13 +321,16 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         {
             var bone = mdlData.theBones[i];
 
-            // Y/Z swap: Source is Z-up, sbox is Y-up
-            var pos = new Vector3( (float)bone.position.x, (float)bone.position.z, (float)bone.position.y );
+            // ModelBuilder.AddBone expects the bind pose in model/object space, while
+            // animation frames remain local-to-parent. Build the absolute bind transform
+            // here so the generated inverse bind matrices match the mesh skin weights.
+            var pos = new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z );
             var rot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
 
-            // Root bone needs 180° yaw to match sbox facing convention
+            // Keep the existing Source1 -> s&box facing correction. Use the same order as
+            // the animation path so bind pose and frame 0 agree.
             if ( bone.parentBoneIndex < 0 )
-                rot = rot * Rotation.FromYaw( 180 );
+                rot = Rotation.FromYaw( 180 ) * rot;
 
             var localTx = new Transform( pos, rot );
             boneTransforms[i] = bone.parentBoneIndex >= 0 && bone.parentBoneIndex < i
@@ -355,30 +377,59 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         int boneCount = mdlData.theBones?.Count ?? 0;
         if ( boneCount == 0 ) return;
 
+        // A Source sequence can reference more than one anim desc. The previous loader only
+        // exported seq.theAnimDescIndexes[0], which drops blend/variant anim descs that may
+        // contain limb motion. Export every referenced desc as a standalone animation for now.
+        var usedAnimationNames = new HashSet<string>( StringComparer.OrdinalIgnoreCase );
+
         foreach ( var seq in sequences )
         {
             if ( seq.theAnimDescIndexes == null || seq.theAnimDescIndexes.Count == 0 ) continue;
 
-            int animDescIdx = seq.theAnimDescIndexes[0];
-            if ( animDescIdx < 0 || animDescIdx >= animations.Count ) continue;
-
-            var animDesc = animations[animDescIdx];
-            if ( animDesc.frameCount <= 0 ) continue;
-
-            // Get the bone list that was used when parsing this anim desc
-            List<SourceMdlBone>? animBones = null;
-            animDescBones?.TryGetValue( animDesc, out animBones );
-
-            var animBuilder = modelBuilder.AddAnimation( seq.theName, (float)animDesc.fps );
-            animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
-            animBuilder.WithDelta( ( animDesc.flags & 0x00000004 ) != 0 );
-            animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
-
-            for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
+            for ( int descSlot = 0; descSlot < seq.theAnimDescIndexes.Count; descSlot++ )
             {
-                var frameTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
-                animBuilder.AddFrame( frameTransforms.AsSpan() );
+                int animDescIdx = seq.theAnimDescIndexes[descSlot];
+                if ( animDescIdx < 0 || animDescIdx >= animations.Count ) continue;
+
+                var animDesc = animations[animDescIdx];
+                if ( animDesc.frameCount <= 0 ) continue;
+
+                // Get the bone list that was used when parsing this anim desc
+                List<SourceMdlBone>? animBones = null;
+                animDescBones?.TryGetValue( animDesc, out animBones );
+
+                string baseName = descSlot == 0
+                    ? seq.theName
+                    : $"{seq.theName}__desc{descSlot}";
+                string animName = MakeUniqueAnimationName( baseName, usedAnimationNames );
+
+                var animBuilder = modelBuilder.AddAnimation( animName, (float)animDesc.fps );
+                animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
+                animBuilder.WithDelta( ( animDesc.flags & 0x00000004 ) != 0 );
+                animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
+
+                for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
+                {
+                    var frameTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
+                    animBuilder.AddFrame( frameTransforms.AsSpan() );
+                }
             }
+        }
+    }
+
+    private static string MakeUniqueAnimationName( string baseName, HashSet<string> usedNames )
+    {
+        if ( string.IsNullOrWhiteSpace( baseName ) )
+            baseName = "animation";
+
+        if ( usedNames.Add( baseName ) )
+            return baseName;
+
+        for ( int i = 1; ; i++ )
+        {
+            string candidate = $"{baseName}__dup{i}";
+            if ( usedNames.Add( candidate ) )
+                return candidate;
         }
     }
 
@@ -411,10 +462,11 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             else
             {
                 var bone = mdlData.theBones[i];
-                var pos = new Vector3( (float)bone.position.x, (float)bone.position.z, (float)bone.position.y );
-                var rot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
+            // NO SWIZZLE
+            var pos = new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z );
+            var rot = new Rotation { x = (float)bone.quat.x, y = (float)bone.quat.y, z = (float)bone.quat.z, w = (float)bone.quat.w };
                 if ( bone.parentBoneIndex < 0 )
-                    rot = rot * Rotation.FromYaw( 180 );
+                    rot = Rotation.FromYaw( 180 ) * rot;
                 localTransforms[i] = new Transform( pos, rot );
             }
         }
@@ -449,33 +501,37 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                 if ( !boneNameToIndex.TryGetValue( animBone.theName, out int charBoneIdx ) ) continue;
 
                 var charBone = mdlData.theBones[charBoneIdx];
+                // Decode compressed animation values against the bone table that owns this
+                // animation desc. For shared anim MDLs, anim.boneIndex addresses animBones,
+                // not the character MDL's bone array.
+                var decodeBone = animBone;
 
         // Position — matching Crowbar's CalcBonePosition logic
         Vector3 pos;
         if ( ( anim.flags & 0x01 ) != 0 && anim.thePos != null )
         {
             // Raw constant 48-bit position
-            pos = DecodePos48( anim.thePos, charBone );
+            pos = DecodePos48( anim.thePos, decodeBone );
         }
         else if ( ( anim.flags & 0x08 ) != 0 && anim.thePosV != null )
         {
             // RLE animated position
             float px = anim.thePosV.animXValueOffset > 0
-                ? GetAnimValue( anim.thePosV.theAnimXValues, localFrameIdx ) * (float)charBone.positionScale.x
+                ? GetAnimValue( anim.thePosV.theAnimXValues, localFrameIdx ) * (float)decodeBone.positionScale.x
                 : 0f;
             float py = anim.thePosV.animYValueOffset > 0
-                ? GetAnimValue( anim.thePosV.theAnimYValues, localFrameIdx ) * (float)charBone.positionScale.y
+                ? GetAnimValue( anim.thePosV.theAnimYValues, localFrameIdx ) * (float)decodeBone.positionScale.y
                 : 0f;
             float pz = anim.thePosV.animZValueOffset > 0
-                ? GetAnimValue( anim.thePosV.theAnimZValues, localFrameIdx ) * (float)charBone.positionScale.z
+                ? GetAnimValue( anim.thePosV.theAnimZValues, localFrameIdx ) * (float)decodeBone.positionScale.z
                 : 0f;
 
             // Add bone rest position if not delta
             if ( ( anim.flags & 0x10 ) == 0 )
             {
-                px += (float)charBone.position.x;
-                py += (float)charBone.position.y;
-                pz += (float)charBone.position.z;
+                px += (float)decodeBone.position.x;
+                py += (float)decodeBone.position.y;
+                pz += (float)decodeBone.position.z;
             }
 
             pos = new Vector3( px, py, pz );
@@ -518,21 +574,21 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                 {
                     // RLE animated rotation
                     float rx = anim.theRotV.animXValueOffset > 0
-                        ? GetAnimValue( anim.theRotV.theAnimXValues, localFrameIdx ) * (float)charBone.rotationScale.x
+                        ? GetAnimValue( anim.theRotV.theAnimXValues, localFrameIdx ) * (float)decodeBone.rotationScale.x
                         : 0f;
                     float ry = anim.theRotV.animYValueOffset > 0
-                        ? GetAnimValue( anim.theRotV.theAnimYValues, localFrameIdx ) * (float)charBone.rotationScale.y
+                        ? GetAnimValue( anim.theRotV.theAnimYValues, localFrameIdx ) * (float)decodeBone.rotationScale.y
                         : 0f;
                     float rz = anim.theRotV.animZValueOffset > 0
-                        ? GetAnimValue( anim.theRotV.theAnimZValues, localFrameIdx ) * (float)charBone.rotationScale.z
+                        ? GetAnimValue( anim.theRotV.theAnimZValues, localFrameIdx ) * (float)decodeBone.rotationScale.z
                         : 0f;
 
                     // Add bone rest rotation if not a delta animation
                     if ( ( anim.flags & 0x10 ) == 0 )
                     {
-                        rx += (float)charBone.rotation.x;
-                        ry += (float)charBone.rotation.y;
-                        rz += (float)charBone.rotation.z;
+                        rx += (float)decodeBone.rotation.x;
+                        ry += (float)decodeBone.rotation.y;
+                        rz += (float)decodeBone.rotation.z;
                     }
 
                     rot = EulerToRotation( rx, ry, rz );
@@ -554,18 +610,17 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                     };
                 }
 
-            Vector3 sboxPos = new Vector3( pos.x, pos.z, pos.y );
-            Rotation sboxRot = rot;
-            // 180° yaw correction is an absolute-pose convention fix; delta frames must not include it
-            if ( charBoneIdx == 0 && !isDeltaAnim )
-                sboxRot = rot * Rotation.FromYaw( 180 );
-
-            localTransforms[charBoneIdx] = new Transform( sboxPos, sboxRot );
-
-
+            if ( charBone.parentBoneIndex < 0 && !isDeltaAnim )
+            {
+                var correction = Rotation.FromYaw( 180 );
+                rot = correction * rot;
+                pos = correction * pos;
             }
+            localTransforms[charBoneIdx] = new Transform( pos, rot );
         }
 
+        
+        }
         return localTransforms;
     }
 
@@ -648,16 +703,28 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         var v  = vertices[origVertId];
         var bw = v.boneWeight;
 
-        var pos    = new Vector3( (float)v.positionX, (float)v.positionY, (float)v.positionZ );
+        // Keep mesh vertices in the same raw Source basis as the skeleton.
+        // The previous (x, -z, y) swizzle made Source Z-up height become a horizontal
+        // axis in s&box, which is why the bind pose appeared to face down into the grid.
+        var pos = new Vector3( (float)v.positionX, (float)v.positionY, (float)v.positionZ );
         var normal = new Vector3( (float)v.normalX, (float)v.normalY, (float)v.normalZ );
+
+        // Keep the same 180° forward correction used on the root bone so the mesh and
+        // skeleton agree on facing direction. Do not use this for axis conversion.
+        var meshCorrection = Rotation.FromYaw( 180 );
+        pos = meshCorrection * pos;
+        normal = meshCorrection * normal;
 
         if ( float.IsNaN( pos.x ) || float.IsNaN( pos.y ) || float.IsNaN( pos.z ) )
             pos = Vector3.Zero;
 
         int boneCount = bw.boneCount;
-        byte b0 = boneCount > 0 ? ResolveBoneId( strip, bw.bone[0], boneTransforms.Length ) : (byte)0;
-        byte b1 = boneCount > 1 ? ResolveBoneId( strip, bw.bone[1], boneTransforms.Length ) : (byte)0;
-        byte b2 = boneCount > 2 ? ResolveBoneId( strip, bw.bone[2], boneTransforms.Length ) : (byte)0;
+        // VVD bone indices are skeleton/global bone indices. Do not run them through
+        // VTX hardware palette state changes; that remaps them into draw-call palette
+        // slots and makes vertices follow the wrong bones.
+        byte b0 = boneCount > 0 ? ClampBoneId( bw.bone[0], boneTransforms.Length ) : (byte)0;
+        byte b1 = boneCount > 1 ? ClampBoneId( bw.bone[1], boneTransforms.Length ) : (byte)0;
+        byte b2 = boneCount > 2 ? ClampBoneId( bw.bone[2], boneTransforms.Length ) : (byte)0;
 
         float w0 = boneCount > 0 ? (float)bw.weight[0] : 1f;
         float w1 = boneCount > 1 ? (float)bw.weight[1] : 0f;
@@ -691,13 +758,9 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         newIdx++;
     }
 
-    private static byte ResolveBoneId( SourceVtxStrip07 strip, int hwBoneId, int maxBoneCount )
+    private static byte ClampBoneId( int boneId, int maxBoneCount )
     {
-        if ( strip.theVtxBoneStateChanges != null )
-            foreach ( var bsc in strip.theVtxBoneStateChanges )
-                if ( bsc.hardwareId == hwBoneId )
-                    return (byte)Math.Clamp( bsc.newBoneId, 0, maxBoneCount - 1 );
-        return (byte)Math.Clamp( hwBoneId, 0, maxBoneCount - 1 );
+        return (byte)Math.Clamp( boneId, 0, maxBoneCount - 1 );
     }
 
     // ── Material resolution ───────────────────────────────────────────────
