@@ -114,21 +114,17 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
 
     private static List<string> GetIncludedAnimMdlsForModel( string modelName )
     {
-        // This is intentionally conservative. The decompiled knight.qc includes only
-        // player/anim_shared.mdl and player/anim_judgement.mdl. Keep this exact for
-        // knight so unrelated animation MDLs do not pollute the exported sequence set.
+        // player/anim_shared.mdl and player/anim_judgement.mdl. 
         if ( modelName == "knight" )
         {
             return new List<string>
             {
-                "anim_shared.mdl",
                 "anim_judgement.mdl",
+                "anim_shared.mdl",
             };
         }
 
-        // Fallback for characters whose QC has not been provided yet. This preserves
-        // the old broad behavior for non-knight models, but these should ideally be
-        // replaced with exact QC/MDL includemodel data per character.
+        // Fallback for characters whose QC has not been investigated yet. 
         var files = new List<string>
         {
             "anim_shared.mdl",
@@ -377,43 +373,176 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
         int boneCount = mdlData.theBones?.Count ?? 0;
         if ( boneCount == 0 ) return;
 
-        // A Source sequence can reference more than one anim desc. The previous loader only
-        // exported seq.theAnimDescIndexes[0], which drops blend/variant anim descs that may
-        // contain limb motion. Export every referenced desc as a standalone animation for now.
+        // A Source sequence can reference more than one anim desc. In Source this is
+        // commonly a pose-parameter/blend table, not a list of separate standalone
+        // animations. Using slot 0 as the exported sequence can pick an extreme blend
+        // sample, which often looks like weak/stiff limb movement. Export a neutral-ish
+        // center sample under the real sequence name, while still exporting every raw
+        // sample as diagnostics.
         var usedAnimationNames = new HashSet<string>( StringComparer.OrdinalIgnoreCase );
 
         foreach ( var seq in sequences )
         {
             if ( seq.theAnimDescIndexes == null || seq.theAnimDescIndexes.Count == 0 ) continue;
 
+            int primaryDescSlot = ChoosePrimaryAnimDescSlot( seq.theAnimDescIndexes );
+            ExportSequenceAnimDesc(
+                mdlData,
+                modelBuilder,
+                animations,
+                seq,
+                primaryDescSlot,
+                seq.theName,
+                usedAnimationNames,
+                animDescBones );
+
+            // Diagnostic exports. These let us inspect the raw pose/blend samples directly.
+            // They should not be treated as final runtime animations.
             for ( int descSlot = 0; descSlot < seq.theAnimDescIndexes.Count; descSlot++ )
             {
-                int animDescIdx = seq.theAnimDescIndexes[descSlot];
-                if ( animDescIdx < 0 || animDescIdx >= animations.Count ) continue;
-
-                var animDesc = animations[animDescIdx];
-                if ( animDesc.frameCount <= 0 ) continue;
-
-                // Get the bone list that was used when parsing this anim desc
-                List<SourceMdlBone>? animBones = null;
-                animDescBones?.TryGetValue( animDesc, out animBones );
-
-                string baseName = descSlot == 0
-                    ? seq.theName
-                    : $"{seq.theName}__desc{descSlot}";
-                string animName = MakeUniqueAnimationName( baseName, usedAnimationNames );
-
-                var animBuilder = modelBuilder.AddAnimation( animName, (float)animDesc.fps );
-                animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
-                animBuilder.WithDelta( ( animDesc.flags & 0x00000004 ) != 0 );
-                animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
-
-                for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
-                {
-                    var frameTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
-                    animBuilder.AddFrame( frameTransforms.AsSpan() );
-                }
+                ExportSequenceAnimDesc(
+                    mdlData,
+                    modelBuilder,
+                    animations,
+                    seq,
+                    descSlot,
+                    $"{seq.theName}__sample{descSlot}",
+                    usedAnimationNames,
+                    animDescBones );
             }
+        }
+
+        // Low-level diagnostics: export each animation desc by its own name as well.
+        // This is useful for spotting whether the missing limb motion exists in the
+        // decoded anim desc before sequence blending/autolayers/IK are considered.
+        for ( int i = 0; i < animations.Count; i++ )
+        {
+            var animDesc = animations[i];
+            if ( animDesc.frameCount <= 0 ) continue;
+            if ( string.IsNullOrWhiteSpace( animDesc.theName ) ) continue;
+
+            ExportRawAnimDesc(
+                mdlData,
+                modelBuilder,
+                animDesc,
+                $"_anim_{animDesc.theName}",
+                usedAnimationNames,
+                animDescBones );
+        }
+    }
+
+    private static int ChoosePrimaryAnimDescSlot( List<short> animDescIndexes )
+    {
+        // Best-effort pose-parameter handling without requiring the QC at runtime.
+        // For a 1D or flattened 2D blend table, the middle slot is usually a better
+        // neutral preview than slot 0, which is often an extreme pose-parameter value.
+        if ( animDescIndexes == null || animDescIndexes.Count <= 1 ) return 0;
+        return animDescIndexes.Count / 2;
+    }
+
+    private void ExportSequenceAnimDesc(
+        SourceMdlFileData49 mdlData,
+        ModelBuilder modelBuilder,
+        List<SourceMdlAnimationDesc49> animations,
+        SourceMdlSequenceDesc seq,
+        int descSlot,
+        string requestedName,
+        HashSet<string> usedAnimationNames,
+        Dictionary<SourceMdlAnimationDesc49, List<SourceMdlBone>>? animDescBones )
+    {
+        if ( seq.theAnimDescIndexes == null ) return;
+        if ( descSlot < 0 || descSlot >= seq.theAnimDescIndexes.Count ) return;
+
+        int animDescIdx = seq.theAnimDescIndexes[descSlot];
+        if ( animDescIdx < 0 || animDescIdx >= animations.Count ) return;
+
+        var animDesc = animations[animDescIdx];
+        if ( animDesc.frameCount <= 0 ) return;
+
+        // Get the bone list that was used when parsing this anim desc.
+        List<SourceMdlBone>? animBones = null;
+        animDescBones?.TryGetValue( animDesc, out animBones );
+
+        string animName = MakeUniqueAnimationName( requestedName, usedAnimationNames );
+
+        var animBuilder = modelBuilder.AddAnimation( animName, (float)animDesc.fps );
+        animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
+        animBuilder.WithDelta( ( animDesc.flags & 0x00000004 ) != 0 );
+        animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
+
+        for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
+        {
+            var frameTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
+            animBuilder.AddFrame( frameTransforms.AsSpan() );
+        }
+
+        ExportBakedDeltaPreviewAnimDesc(
+            mdlData,
+            modelBuilder,
+            animDesc,
+            $"{requestedName}__baked_delta_preview",
+            usedAnimationNames,
+            animBones );
+    }
+
+    private void ExportRawAnimDesc(
+        SourceMdlFileData49 mdlData,
+        ModelBuilder modelBuilder,
+        SourceMdlAnimationDesc49 animDesc,
+        string requestedName,
+        HashSet<string> usedAnimationNames,
+        Dictionary<SourceMdlAnimationDesc49, List<SourceMdlBone>>? animDescBones )
+    {
+        if ( animDesc.frameCount <= 0 ) return;
+
+        List<SourceMdlBone>? animBones = null;
+        animDescBones?.TryGetValue( animDesc, out animBones );
+
+        string animName = MakeUniqueAnimationName( requestedName, usedAnimationNames );
+
+        var animBuilder = modelBuilder.AddAnimation( animName, (float)animDesc.fps );
+        animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
+        animBuilder.WithDelta( ( animDesc.flags & 0x00000004 ) != 0 );
+        animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
+
+        for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
+        {
+            var frameTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
+            animBuilder.AddFrame( frameTransforms.AsSpan() );
+        }
+
+        ExportBakedDeltaPreviewAnimDesc(
+            mdlData,
+            modelBuilder,
+            animDesc,
+            $"{requestedName}__baked_delta_preview",
+            usedAnimationNames,
+            animBones );
+    }
+
+    private void ExportBakedDeltaPreviewAnimDesc(
+        SourceMdlFileData49 mdlData,
+        ModelBuilder modelBuilder,
+        SourceMdlAnimationDesc49 animDesc,
+        string requestedName,
+        HashSet<string> usedAnimationNames,
+        List<SourceMdlBone>? animBones )
+    {
+        const int STUDIO_DELTA = 0x00000004;
+        if ( ( animDesc.flags & STUDIO_DELTA ) == 0 ) return;
+        if ( animDesc.frameCount <= 0 ) return;
+
+        string animName = MakeUniqueAnimationName( requestedName, usedAnimationNames );
+
+        var animBuilder = modelBuilder.AddAnimation( animName, (float)animDesc.fps );
+        animBuilder.WithLooping( ( animDesc.flags & 0x00000001 ) != 0 );
+        animBuilder.WithDelta( false );
+        animBuilder.WithInterpolationDisabled( ( animDesc.flags & 0x00000002 ) != 0 );
+
+        for ( int frameIdx = 0; frameIdx < animDesc.frameCount; frameIdx++ )
+        {
+            var frameTransforms = BuildBakedDeltaPreviewFrameTransforms( mdlData, animDesc, frameIdx, animBones );
+            animBuilder.AddFrame( frameTransforms.AsSpan() );
         }
     }
 
@@ -431,6 +560,55 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             if ( usedNames.Add( candidate ) )
                 return candidate;
         }
+    }
+
+    private static Transform[] BuildRestLocalTransforms( SourceMdlFileData49 mdlData )
+    {
+        int boneCount = mdlData.theBones!.Count;
+        var restTransforms = new Transform[boneCount];
+
+        for ( int i = 0; i < boneCount; i++ )
+        {
+            var bone = mdlData.theBones[i];
+            var pos = new Vector3( (float)bone.position.x, (float)bone.position.y, (float)bone.position.z );
+            var rot = new Rotation
+            {
+                x = (float)bone.quat.x,
+                y = (float)bone.quat.y,
+                z = (float)bone.quat.z,
+                w = (float)bone.quat.w
+            };
+
+            if ( bone.parentBoneIndex < 0 )
+                rot = Rotation.FromYaw( 180 ) * rot;
+
+            restTransforms[i] = new Transform( pos, rot );
+        }
+
+        return restTransforms;
+    }
+
+    private static Transform[] BuildBakedDeltaPreviewFrameTransforms(
+        SourceMdlFileData49 mdlData,
+        SourceMdlAnimationDesc49 animDesc,
+        int frameIdx,
+        List<SourceMdlBone>? animBones = null )
+    {
+        var restTransforms = BuildRestLocalTransforms( mdlData );
+        var deltaTransforms = BuildFrameTransforms( mdlData, animDesc, frameIdx, animBones );
+
+        for ( int i = 0; i < restTransforms.Length; i++ )
+        {
+            var rest = restTransforms[i];
+            var delta = deltaTransforms[i];
+
+
+            restTransforms[i] = new Transform(
+                rest.Position + delta.Position,
+                rest.Rotation * delta.Rotation );
+        }
+
+        return restTransforms;
     }
 
     private static Transform[] BuildFrameTransforms(
@@ -501,9 +679,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                 if ( !boneNameToIndex.TryGetValue( animBone.theName, out int charBoneIdx ) ) continue;
 
                 var charBone = mdlData.theBones[charBoneIdx];
-                // Decode compressed animation values against the bone table that owns this
-                // animation desc. For shared anim MDLs, anim.boneIndex addresses animBones,
-                // not the character MDL's bone array.
+
                 var decodeBone = animBone;
 
         // Position — matching Crowbar's CalcBonePosition logic
@@ -513,7 +689,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
             // Raw constant 48-bit position
             pos = DecodePos48( anim.thePos, decodeBone );
         }
-        else if ( ( anim.flags & 0x08 ) != 0 && anim.thePosV != null )
+        else if ( ( anim.flags & 0x04 ) != 0 && anim.thePosV != null )
         {
             // RLE animated position
             float px = anim.thePosV.animXValueOffset > 0
@@ -570,7 +746,7 @@ class Source1ModelLoader : ResourceLoader<Source1Mount>
                         w = (float)anim.theRot64bits.w
                     };
                 }
-                else if ( ( anim.flags & 0x04 ) != 0 && anim.theRotV != null )
+                else if ( ( anim.flags & 0x08 ) != 0 && anim.theRotV != null )
                 {
                     // RLE animated rotation
                     float rx = anim.theRotV.animXValueOffset > 0
